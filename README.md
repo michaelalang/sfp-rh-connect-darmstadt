@@ -5,6 +5,56 @@
 dnf -y install podman dnsmasq bind-utils
 ```
 
+### setup dnsmasq for the Lab 
+
+```
+cat <<'EOF'> /etc/dnsmasq.conf
+no-resolv
+strict-order
+user=dnsmasq
+group=dnsmasq
+interface=*
+domain=example.com
+server=8.8.8.8
+conf-dir=/etc/dnsmasq.d
+hostsdir=/etc/dnsmasq.hosts/
+EOF
+
+systemctl enable --now dnsmasq
+```
+
+# configure DNS service discovery 
+
+``` 
+cat <<'EOF'> /etc/dnsmasq.d/srv.conf
+srv-host=_prometheus._tcp.dc1.example.com,node1.dc1.example.com,9100
+srv-host=_prometheus._tcp.dc2.example.com,node2.dc2.example.com,9100
+EOF
+
+IP=$(hostname -I | awk ' { print $1 }')
+mkdir /etc/dnsmasq.hosts/
+cat <<EOF> /etc/dnsmasq.hosts/hosts
+127.0.0.2      prometheus1.example.com
+127.0.0.3      prometheus2.example.com
+${IP} prometheus.example.com
+${IP} node1.dc1.example.com
+${IP} node2.dc2.example.com
+EOF
+
+systemctl restart dnsmasq
+```
+
+# configure the host to use the local dnsmasq 
+
+```
+nmcli c mod 'System eth0' ipv4.ignore-auto-dn yes
+nmcli c mod 'System eth0' ipv4.dns $(hostname -I | awk ' { print $1 }')
+nmcli c up 'System eth0'
+
+host -t srv _prometheus._tcp.dc1.example.com
+host -t srv _prometheus._tcp.dc2.example.com
+``` 
+
 ### create two prometheus instance pods 
 
 ``` 
@@ -156,56 +206,6 @@ podman run -d \
      --web.listen-address=:9100 \
      --path.rootfs=/host
 ```
-
-### setup dnsmasq for the Lab 
-
-```
-cat <<'EOF'> /etc/dnsmasq.conf
-no-resolv
-strict-order
-user=dnsmasq
-group=dnsmasq
-interface=*
-domain=example.com
-server=8.8.8.8
-conf-dir=/etc/dnsmasq.d
-hostsdir=/etc/dnsmasq.hosts/
-EOF
-
-systemctl enable --now dnsmasq
-```
-
-# configure DNS service discovery 
-
-``` 
-cat <<'EOF'> /etc/dnsmasq.d/srv.conf
-srv-host=_prometheus._tcp.dc1.example.com,node1.dc1.example.com,9100
-srv-host=_prometheus._tcp.dc2.example.com,node2.dc2.example.com,9100
-EOF
-
-IP=$(hostname -I | awk ' { print $1 }')
-mkdir /etc/dnsmasq.hosts/
-cat <<EOF> /etc/dnsmasq.hosts/hosts
-127.0.0.2      prometheus1.example.com
-127.0.0.3      prometheus2.example.com
-${IP} prometheus.example.com
-${IP} node1.dc1.example.com
-${IP} node2.dc2.example.com
-EOF
-
-systemctl restart dnsmasq
-``` 
-
-# configure the host to use the local dnsmasq 
-
-```
-nmcli c mod 'System eth0' ipv4.ignore-auto-dn yes
-nmcli c mod 'System eth0' ipv4.dns $(hostname -I | awk ' { print $1 }')
-nmcli c up 'System eth0'
-
-host -t srv _prometheus._tcp.dc1.example.com
-host -t srv _prometheus._tcp.dc2.example.com
-``` 
 
 # update the prometheus configuration to use DNS service discovery
 
