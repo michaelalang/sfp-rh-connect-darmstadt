@@ -2,7 +2,7 @@
 
 ### install depencendies
 ```
-dnf -y install podman dnsmasq
+dnf -y install podman dnsmasq bind-utils
 ```
 
 ### create two prometheus instance pods 
@@ -130,6 +130,7 @@ podman run -d \
    quay.io/thanos/thanos:v0.35.1 \
      query \
      --http-address $(hostname -I | awk ' { print $1 }'):9090 \
+     --grpc-address $(hostname -I | awk ' { print $1 }'):9191 \
      --query.replica-label replica \
      --store prometheus1.example.com:9191 \
      --store prometheus2.example.com:9191
@@ -222,6 +223,8 @@ cat <<'EOF'>> prometheus2.yml
     - names:
         - "_prometheus._tcp.dc2.example.com"
 EOF
+
+podman restart prometheus1 prometheus2
 ```
 
 ```
