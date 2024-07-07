@@ -62,10 +62,18 @@ podman pod create -n prometheus1 -p 127.0.0.2:9090:9090 -p 127.0.0.2:9191:9191
 podman pod create -n prometheus2 -p 127.0.0.3:9090:9090 -p 127.0.0.3:9191:9191
 ```
 
-### create two prometheus conifugrations 
+### create two volumes for the prometheus comfigurations
+
+```
+podman volume create prometheus1-cfg
+podman volume create prometheus2-cfg
+```
+
+### create two prometheus configurations 
 
 ``` 
-cat <<'EOF'> prometheus1.yml
+CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'> ${CFG}
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -82,7 +90,8 @@ scrape_configs:
       - targets: ['127.0.0.1:9091']
 EOF
 
-cat <<'EOF'> prometheus2.yml
+CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'> ${CFG}
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -98,18 +107,16 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:9091']
 EOF
-
-chcon -t container_file_t prometheus*.yml
 ``` 
 
 ### start the prometheus instances
 
 ```
 export NAME=prometheus1
-export CFG="${NAME}.yml"
+export CFG="${NAME}-cfg"
 podman run --pod=prometheus1 -d \
     --restart unless-stopped \
-    -v $(pwd)/${CFG}:/etc/prometheus/prometheus.yml \
+    -v ${CFG}:/etc/prometheus \
     -v ${NAME}:/prometheus \
     --name ${NAME} \
     quay.io/prometheus/prometheus:latest \
@@ -124,10 +131,10 @@ podman run --pod=prometheus1 -d \
       --web.enable-admin-api 
 
 export NAME=prometheus2
-export CFG="${NAME}.yml"
+export CFG="${NAME}-cfg"
 podman run --pod=${NAME} -d \
     --restart unless-stopped \
-    -v $(pwd)/${CFG}:/etc/prometheus/prometheus.yml \
+    -v ${CFG}:/etc/prometheus \
     -v ${NAME}:/prometheus \
     --name ${NAME} \
     quay.io/prometheus/prometheus:latest \
@@ -146,25 +153,29 @@ podman run --pod=${NAME} -d \
 
 ```
 export NAME=prometheus1
+export CFG="${NAME}-cfg"
 podman run --pod=${NAME} -d \
     --restart unless-stopped \
-    -v $(pwd)/${CFG}:/etc/prometheus/prometheus.yml \
+    -v ${CFG}:/etc/prometheus \
     -v ${NAME}:/prometheus \
     --name ${NAME}-sidecar \
     quay.io/thanos/thanos:v0.35.1 \
       sidecar \
+      --reloader.config-file=/etc/prometheus/prometheus.yml \
       --http-address :9091 \
       --grpc-address :9191 \
       --prometheus.url http://127.0.0.1:9090
 
 export NAME=prometheus2
+export CFG="${NAME}-cfg"
 podman run --pod=${NAME} -d \
     --restart unless-stopped \
-    -v $(pwd)/${CFG}:/etc/prometheus/prometheus.yml \
+    -v ${CFG}:/etc/prometheus \
     -v ${NAME}:/prometheus \
     --name ${NAME}-sidecar \
     quay.io/thanos/thanos:v0.35.1 \
       sidecar \
+      --reloader.config-file=/etc/prometheus/prometheus.yml \
       --http-address :9091 \
       --grpc-address :9191 \
       --prometheus.url http://127.0.0.1:9090
@@ -210,21 +221,21 @@ podman run -d \
 # update the prometheus configuration to use DNS service discovery
 
 ```
-cat <<'EOF'>> prometheus1.yml
+CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'>> ${CFG}
   - job_name: "node"
     dns_sd_configs:
     - names:
         - "_prometheus._tcp.dc1.example.com"
 EOF
 
-cat <<'EOF'>> prometheus2.yml
+CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'>> ${CFG}
   - job_name: "node"
     dns_sd_configs:
     - names:
         - "_prometheus._tcp.dc2.example.com"
 EOF
-
-podman restart prometheus1 prometheus2
 ```
 
 ```
@@ -275,21 +286,21 @@ systemctl restart dnsmasq
 ```
 
 ```
-cat <<'EOF'> prometheus1.yml
+CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'>> ${CFG}
   - job_name: "customapp"
     dns_sd_configs:
     - names:
         - "_customapp._tcp.example.com"
 EOF
 
-cat <<'EOF'> prometheus2.yml
+CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+cat <<'EOF'>> ${CFG}
   - job_name: "customapp"
     dns_sd_configs:
     - names:
         - "_customapp._tcp.example.com"
 EOF
-
-podman restart prometheus1 prometheus2
 ```
  
 ```
