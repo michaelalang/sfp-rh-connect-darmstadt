@@ -265,13 +265,19 @@ systemctl restart dnsmasq
 
 
 ```
-mkdir /root/exportme
+mkdir /home/cloud-user/exportme
+
+cat <<'EOF'> /home/cloud-user/metrics.tmpl
+# HELP linux_users_logged_in Total users logged in to the system
+# TYPE linux_users_logged_in gauge
+linux_users_logged_in ${USERS}
+EOF
 
 crontab -e
 # add logged in users count
-* * * * * export USERS=$(w -hu | wc -l) ; cat metrics.tmpl | envsubst > /root/exportme/metrics
+* * * * * export USERS=$(w -hu | wc -l) ; cat /home/cloud-user/metrics.tmpl | envsubst > /home/cloud-user/exportme/metrics
 
-python -m http.server 8080 -d /root/exportme
+(python -m http.server 8080 -d /home/cloud-user/exportme >/home/cloud-user/exportme/access.log 2>&1 &)
 ``` 
 
 ## integrate your custom monitor into our prometheus
