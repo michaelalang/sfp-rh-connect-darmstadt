@@ -182,13 +182,14 @@ srv-host=_prometheus._tcp.dc1.example.com,node1.dc1.example.com,9100
 srv-host=_prometheus._tcp.dc2.example.com,node2.dc2.example.com,9100
 EOF
 
+IP=$(hostname -I | awk ' { print $1 }')
 mkdir /etc/dnsmasq.hosts/
-cat <<'EOF'> /etc/dnsmasq.hosts/hosts
+cat <<EOF> /etc/dnsmasq.hosts/hosts
 127.0.0.2      prometheus1.example.com
 127.0.0.3      prometheus2.example.com
-192.168.192.35 prometheus.example.com
-192.168.192.35 node1.dc1.example.com
-192.168.192.35 node2.dc2.example.com
+${IP} prometheus.example.com
+${IP} node1.dc1.example.com
+${IP} node2.dc2.example.com
 EOF
 
 systemctl restart dnsmasq
@@ -198,7 +199,7 @@ systemctl restart dnsmasq
 
 ```
 nmcli c mod 'System eth0' ipv4.ignore-auto-dn yes
-nmcli c mod 'System eth0' ipv4.dns 192.168.192.35
+nmcli c mod 'System eth0' ipv4.dns $(hostname -I | awk ' { print $1 }')
 nmcli c up 'System eth0'
 
 host -t srv _prometheus._tcp.dc1.example.com
@@ -231,14 +232,15 @@ curl -s prometheus.example.com:9090/api/v1/targets | \
 # extend the DNS discovery to more targets
 
 ```
+export IP=$(hostname -I | awk ' { print $1 }')
 for x in $(seq 3 2 10) ; do 
     echo "srv-host=_prometheus._tcp.dc1.example.com,node${x}.dc1.example.com,9100" >> /etc/dnsmasq.d/srv.conf
-    echo "$(hostname -I | awk ' { print $1 }') node${x}.dc1.example.com" >> /etc/dnsmasq.hosts/hosts
+    echo "${IP} node${x}.dc1.example.com" >> /etc/dnsmasq.hosts/hosts
 done
 
 for x in $(seq 4 2 10) ; do
     echo "srv-host=_prometheus._tcp.dc2.example.com,node${x}.dc2.example.com,9100" >> /etc/dnsmasq.d/srv.conf
-    echo "$(hostname -I | awk ' { print $1 }') node${x}.dc2.example.com" >> /etc/dnsmasq.hosts/hosts
+    echo "${IP} node${x}.dc2.example.com" >> /etc/dnsmasq.hosts/hosts
 done
 
 
