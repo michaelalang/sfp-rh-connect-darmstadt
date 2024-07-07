@@ -1,13 +1,12 @@
-# Setup the Lab
+# MultiRegion Lab Settup
 
-### install depencendies
+### configuration second Region
+
+The MultiRegion setup will clone the original Lab and adjust values accordingly so that copy&paste is sufficient.
+
 ```
 dnf -y install podman dnsmasq bind-utils
-```
 
-### setup dnsmasq for the Lab 
-
-```
 cat <<'EOF'> /etc/dnsmasq.conf
 no-resolv
 strict-order
@@ -21,14 +20,10 @@ hostsdir=/etc/dnsmasq.hosts/
 EOF
 
 systemctl enable --now dnsmasq
-```
 
-# configure DNS service discovery 
-
-``` 
 cat <<'EOF'> /etc/dnsmasq.d/srv.conf
-srv-host=_prometheus._tcp.dc1.example.com,node1.dc1.example.com,9100
-srv-host=_prometheus._tcp.dc2.example.com,node2.dc2.example.com,9100
+srv-host=_prometheus._tcp.dc3.example.com,node1.dc3.example.com,9100
+srv-host=_prometheus._tcp.dc4.example.com,node2.dc4.example.com,9100
 EOF
 
 IP=$(hostname -I | awk ' { print $1 }')
@@ -37,48 +32,32 @@ cat <<EOF> /etc/dnsmasq.hosts/hosts
 127.0.0.2      prometheus1.example.com
 127.0.0.3      prometheus2.example.com
 ${IP} prometheus.example.com
-${IP} node1.dc1.example.com
-${IP} node2.dc2.example.com
+${IP} node1.dc3.example.com
+${IP} node2.dc4.example.com
 EOF
 
 systemctl restart dnsmasq
-```
 
-# configure the host to use the local dnsmasq 
-
-```
 nmcli c mod 'System eth0' ipv4.ignore-auto-dn yes
 nmcli c mod 'System eth0' ipv4.dns $(hostname -I | awk ' { print $1 }')
 nmcli c up 'System eth0'
 
-host -t srv _prometheus._tcp.dc1.example.com
-host -t srv _prometheus._tcp.dc2.example.com
-``` 
+host -t srv _prometheus._tcp.dc3.example.com
+host -t srv _prometheus._tcp.dc4.example.com
 
-### create two prometheus instance pods 
-
-``` 
 podman pod create -n prometheus1 -p 127.0.0.2:9090:9090 -p 127.0.0.2:9191:9191
 podman pod create -n prometheus2 -p 127.0.0.3:9090:9090 -p 127.0.0.3:9191:9191
-```
 
-### create two volumes for the prometheus comfigurations
-
-```
 podman volume create prometheus1-cfg
 podman volume create prometheus2-cfg
-```
 
-### create two prometheus configurations 
-
-``` 
 CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
 cat <<'EOF'> ${CFG}
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: us-east-1
+    cluster: us-east-2
     replica: 0
 
 scrape_configs:
@@ -96,7 +75,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: us-west-1
+    cluster: us-west-2
     replica: 0
 
 scrape_configs:
@@ -107,18 +86,13 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:9091']
 EOF
-``` 
 
-### start the prometheus instances
-
-```
 export NAME=prometheus1
 export CFG="${NAME}-cfg"
 podman run --pod=prometheus1 -d \
     --restart unless-stopped \
-    -v ${CFG}:/etc/prometheus:z \
-    -v ${NAME}:/prometheus:z \
-    -u 1001 \
+    -v ${CFG}:/etc/prometheus \
+    -v ${NAME}:/prometheus \
     --name ${NAME} \
     quay.io/prometheus/prometheus:latest \
       --config.file=/etc/prometheus/prometheus.yml \
@@ -135,9 +109,8 @@ export NAME=prometheus2
 export CFG="${NAME}-cfg"
 podman run --pod=${NAME} -d \
     --restart unless-stopped \
-    -v ${CFG}:/etc/prometheus:z \
-    -v ${NAME}:/prometheus:z \
-    -u 1001 \
+    -v ${CFG}:/etc/prometheus \
+    -v ${NAME}:/prometheus \
     --name ${NAME} \
     quay.io/prometheus/prometheus:latest \
       --config.file=/etc/prometheus/prometheus.yml \
@@ -149,11 +122,7 @@ podman run --pod=${NAME} -d \
       --storage.tsdb.retention.size 0 \
       --web.enable-lifecycle \
       --web.enable-admin-api
-```
 
-### start the sidecars 
-
-```
 export NAME=prometheus1
 export CFG="${NAME}-cfg"
 podman run --pod=${NAME} -d \
@@ -181,11 +150,7 @@ podman run --pod=${NAME} -d \
       --http-address :9091 \
       --grpc-address :9191 \
       --prometheus.url http://127.0.0.1:9090
-``` 
 
-### start the frontend
-
-```
 podman run -d \
    --restart unless-stopped \
    --net=host \
@@ -197,38 +162,13 @@ podman run -d \
      --query.replica-label replica \
      --store prometheus1.example.com:9191 \
      --store prometheus2.example.com:9191
-```
 
-### start the node exporter on the host to scrape more real-life values
-
-```
-podman run -d \
-   --restart unless-stopped \
-   --net=host --pid=host \
-   -v /:/host:ro,rslave \
-   -v /proc:/host/proc:ro,rslave \
-   -v /sys:/host/sys:ro,rslave \
-   -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket \
-   --name node-exporter \
-   docker.io/prom/node-exporter:latest \
-     --collector.processes \
-     --collector.systemd \
-     --collector.tcpstat \
-     --collector.cgroups \
-     --collector.interrupts \
-     --web.listen-address=:9100 \
-     --path.rootfs=/host
-```
-
-# update the prometheus configuration to use DNS service discovery
-
-```
 CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
 cat <<'EOF'>> ${CFG}
   - job_name: "node"
     dns_sd_configs:
     - names:
-        - "_prometheus._tcp.dc1.example.com"
+        - "_prometheus._tcp.dc3.example.com"
 EOF
 
 CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
@@ -236,89 +176,87 @@ cat <<'EOF'>> ${CFG}
   - job_name: "node"
     dns_sd_configs:
     - names:
-        - "_prometheus._tcp.dc2.example.com"
+        - "_prometheus._tcp.dc4.example.com"
 EOF
-```
 
-```
-curl -s prometheus.example.com:9090/api/v1/targets | \
-  jq -r '.data.activeTargets|length'
-```
-
-# extend the DNS discovery to more targets
-
-```
 export IP=$(hostname -I | awk ' { print $1 }')
 for x in $(seq 3 2 10) ; do 
-    echo "srv-host=_prometheus._tcp.dc1.example.com,node${x}.dc1.example.com,9100" >> /etc/dnsmasq.d/srv.conf
-    echo "${IP} node${x}.dc1.example.com" >> /etc/dnsmasq.hosts/hosts
+    echo "srv-host=_prometheus._tcp.dc3.example.com,node${x}.dc3.example.com,9100" >> /etc/dnsmasq.d/srv.conf
+    echo "${IP} node${x}.dc3.example.com" >> /etc/dnsmasq.hosts/hosts
 done
 
 for x in $(seq 4 2 10) ; do
-    echo "srv-host=_prometheus._tcp.dc2.example.com,node${x}.dc2.example.com,9100" >> /etc/dnsmasq.d/srv.conf
-    echo "${IP} node${x}.dc2.example.com" >> /etc/dnsmasq.hosts/hosts
+    echo "srv-host=_prometheus._tcp.dc4.example.com,node${x}.dc4.example.com,9100" >> /etc/dnsmasq.d/srv.conf
+    echo "${IP} node${x}.dc4.example.com" >> /etc/dnsmasq.hosts/hosts
 done
 
-
-systemctl restart dnsmasq
-``` 
-
-# Custom monitoring implementations 
-
-
-```
-mkdir /home/cloud-user/exportme
-
-cat <<'EOF'> /home/cloud-user/metrics.tmpl
-# HELP linux_users_logged_in Total users logged in to the system
-# TYPE linux_users_logged_in gauge
-linux_users_logged_in ${USERS}
-EOF
-
-crontab -e
-# add logged in users count
-* * * * * export USERS=$(w -hu | wc -l) ; cat /home/cloud-user/metrics.tmpl | envsubst > /home/cloud-user/exportme/metrics
-
-(python -m http.server 8080 -d /home/cloud-user/exportme >/home/cloud-user/exportme/access.log 2>&1 &)
-``` 
-
-## integrate your custom monitor into our prometheus
-
-```
-cat <<'EOF' > /etc/dnsmasq.d/customapp
-srv-host=_customapp._tcp.example.com,node1.dc1.example.com,8080
-srv-host=_customapp._tcp.example.com,node2.dc2.example.com,8080
-EOF
-
 systemctl restart dnsmasq
 ```
 
-```
-CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
-cat <<'EOF'>> ${CFG}
-  - job_name: "customapp"
-    dns_sd_configs:
-    - names:
-        - "_customapp._tcp.example.com"
-EOF
+## Federate the two Regions
 
-CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
-cat <<'EOF'>> ${CFG}
-  - job_name: "customapp"
-    dns_sd_configs:
-    - names:
-        - "_customapp._tcp.example.com"
-EOF
-```
- 
-```
-curl -s prometheus.example.com:9090/api/v1/query \
-  -d 'query=sum(linux_users_logged_in) / count(linux_users_logged_in)' | \
-  jq -r 
-```
+* **DO NOT** bi-directional. This is not what you are looking for.
+  Choose either Reqion1 to Region2 fedration or the other way around
 
+* update the DNS to reference both Virtual Systems as region1 and region2
 
-## further integrations 
+    ```
+    export region1=# << IP of Virtual system 1
+    export region2=# << IP of Virtual system 2
+    echo "${region1} region1.example.com" >> /etc/dnsmasq.hosts/hosts
+    echo "${region2} region2.example.com" >> /etc/dnsmasq.hosts/hosts
 
-* https://prometheus.io/docs/instrumenting/exporters/
-* https://opentelemetry.io/docs/languages/#status-and-releases
+    systemctl restart dnsmasq
+    ``` 
+
+### Update Region1 (us-east-1 and us-west-1)
+
+* login to your initial Lab virtual System 
+* remove the current configure Querier pod
+
+    ```
+    podman rm -f querier
+    ```
+
+* configure the querier pod with a new endpoint pointing to Region 2
+
+    ```
+    podman run -d \
+      --restart unless-stopped \
+      --net=host \
+      --name querier \
+      quay.io/thanos/thanos:v0.35.1 \
+        query \
+        --http-address $(hostname -I | awk ' { print $1 }'):9090 \
+        --grpc-address $(hostname -I | awk ' { print $1 }'):9191 \
+        --query.replica-label replica \
+        --store prometheus1.example.com:9191 \
+        --store prometheus2.example.com:9191 \
+        --store region2.example.com:9191
+    ```
+
+### Update Region2 (us-east-2 and us-west-2)
+
+* login to your initial Lab virtual System 
+* remove the current configure Querier pod
+
+    ```
+    podman rm -f querier
+    ```
+
+* configure the querier pod with a new endpoint pointing to Region 1
+
+    ```
+    podman run -d \
+      --restart unless-stopped \
+      --net=host \
+      --name querier \
+      quay.io/thanos/thanos:v0.35.1 \
+        query \
+        --http-address $(hostname -I | awk ' { print $1 }'):9090 \
+        --grpc-address $(hostname -I | awk ' { print $1 }'):9191 \
+        --query.replica-label replica \
+        --store prometheus1.example.com:9191 \
+        --store prometheus2.example.com:9191 \
+        --store region1.example.com:9191
+    ```
