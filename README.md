@@ -318,6 +318,58 @@ curl -s prometheus.example.com:9090/api/v1/query \
 ```
 
 
+## integrating Performance Copilot systems
+
+Right now, we have all that is commonly used in containerized environments. Let's also integrate legacy System metrics like collected by Performance Copilot.
+In this Lab we will utilize the second System to **in addition** export the PCP metrics as well.
+
+* log in to the second System 
+
+* install pcp and start pcp and pmproxy
+
+    ```
+    dnf install -y pcp
+    systemctl enable --now pcp
+    systemctl enable --now pmproxy
+    ```
+
+* log in to the first System 
+
+* update the DNS configuration to include pcp in service discovery
+
+    ```
+    cat <<'EOF'> /etc/dnsmasq.d/pcp.conf
+    srv-host=_pcp._tcp.dc1.example.com,pcp.example.com,44323
+
+    export IP=# <<< IP of second VM
+    echo "${IP} pcp.example.com" >> /etc/dnsmasq.hosts/hosts
+
+    systemctl restart dnsmasq
+    ```
+
+* update the prometheus config with a new job 
+
+    ```
+    CFG="$(podman volume inspect prometheus1-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+    cat <<'EOF'>> ${CFG}
+      - job_name: "pcp"
+    dns_sd_configs:
+    - names:
+        - "_pcp._tcp.dc1.example.com"
+    EOF
+
+    CFG="$(podman volume inspect prometheus2-cfg | jq -r '.[0].Mountpoint')/prometheus.yml"
+    cat <<'EOF'>> ${CFG}
+      - job_name: "pcp"
+    dns_sd_configs:
+    - names:
+        - "_pcp._tcp.dc1.example.com"
+    EOF
+    ```
+
+Congratulations, that is all which was necessary to merge collecting metrics from the legacy world.
+
+
 ## further integrations 
 
 * https://prometheus.io/docs/instrumenting/exporters/
